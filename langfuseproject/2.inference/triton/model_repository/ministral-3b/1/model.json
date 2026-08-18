@@ -1,0 +1,6 @@
+{
+    "model": "/models_cache/Ministral-3-3B-Instruct-2512",
+    "dtype": "bfloat16",
+    "gpu_memory_utilization": 0.85,
+    "max_model_len": 32768
+}

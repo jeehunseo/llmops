@@ -1,0 +1,23 @@
+services:
+  service:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:8000"
+    environment:
+      DJANGO_DEBUG: "false"
+      DJANGO_ALLOWED_HOSTS: "*"
+      PHOENIX_COLLECTOR_ENDPOINT: http://phoenix:4317
+      PHOENIX_PROJECT_NAME: service
+      PHOENIX_API_KEY: ${PHOENIX_API_KEY:-}
+      INFERENCE_API_URL: http://inference-api:8080
+    volumes:
+      - service_db:/app/data
+
+volumes:
+  service_db:
+
+networks:
+  default:
+    name: llmops-net
+    external: true

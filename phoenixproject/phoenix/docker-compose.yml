@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: phoenix
+      POSTGRES_PASSWORD: phoenix
+      POSTGRES_DB: phoenix
+    volumes:
+      - phoenix_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phoenix"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6006:6006"  # UI + OTLP HTTP collector (/v1/traces)
+      - "4317:4317"  # OTLP gRPC collector
+    environment:
+      PHOENIX_SQL_DATABASE_URL: postgresql://phoenix:phoenix@postgres:5432/phoenix
+      PHOENIX_DEFAULT_RETENTION_POLICY_DAYS: ${PHOENIX_RETENTION_DAYS:-180}
+      PHOENIX_ENABLE_AUTH: ${PHOENIX_ENABLE_AUTH:-false}
+      PHOENIX_SECRET: ${PHOENIX_SECRET:-}
+      PHOENIX_ADMIN_SECRET: ${PHOENIX_ADMIN_SECRET:-}
+      PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD: ${PHOENIX_ADMIN_PASSWORD:-}
+
+volumes:
+  phoenix_pg_data:
+
+networks:
+  default:
+    name: llmops-net
+    external: true

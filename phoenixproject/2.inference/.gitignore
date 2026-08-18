@@ -1,0 +1,5 @@
+api/.venv
+api/__pycache__/
+*.pyc
+.env
+triton/models_cache/

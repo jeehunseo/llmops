@@ -1,0 +1,16 @@
+[project]
+name = "service"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=6.1",
+    "djangorestframework>=3.18.0",
+    "gunicorn>=26.0.0",
+    "openinference-semantic-conventions>=0.1.32",
+    "opentelemetry-exporter-otlp-proto-http>=1.39.0",
+    "opentelemetry-instrumentation-django>=0.65b0",
+    "opentelemetry-instrumentation-requests>=0.65b0",
+    "opentelemetry-sdk>=1.39.0",
+]

@@ -1,0 +1,46 @@
+services:
+  triton:
+    image: nvcr.io/nvidia/tritonserver:${TRITON_IMAGE_TAG:-26.07}-vllm-python-py3
+    restart: unless-stopped
+    environment:
+      HF_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
+    volumes:
+      - ./triton/model_repository:/models
+      - ./triton/models_cache:/models_cache:ro
+    command: ["tritonserver", "--model-repository=/models"]
+    ports:
+      - "8000:8000"  # HTTP
+      - "8001:8001"  # gRPC
+      - "8002:8002"  # metrics
+    shm_size: "2g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  inference-api:
+    build: ./api
+    restart: unless-stopped
+    depends_on:
+      - triton
+    ports:
+      - "8080:8080"
+    environment:
+      TRITON_URL: http://triton:8000
+      TRITON_MODEL_NAME: ministral-3b
+      MODEL_PATH: /models_cache/Ministral-3-3B-Instruct-2512
+      LANGFUSE_HOST: http://langfuse-web:3000
+      LANGFUSE_PROJECT_NAME: inference-api
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+    volumes:
+      - ./triton/models_cache:/models_cache:ro
+
+networks:
+  default:
+    name: llmops-net
+    external: true
