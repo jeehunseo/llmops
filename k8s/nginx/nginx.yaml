@@ -1,0 +1,114 @@
+# nginx reachable from outside the cluster.
+#
+# Two Services are defined on purpose, both pointing at the same pods:
+#
+#   nginx-lb    type LoadBalancer. Docker Desktop binds these straight to
+#               localhost, so this is the one to use day to day:
+#                 http://localhost:8080
+#
+#   nginx-np    type NodePort, pinned to 30080. A LoadBalancer needs a cloud
+#               provider to assign an address; on any cluster that has none the
+#               EXTERNAL-IP stays <pending> forever. NodePort always works:
+#                 http://localhost:30080
+#
+# Delete whichever you do not need -- they are independent.
+#
+#   kubectl apply -f nginx.yaml
+#   curl http://localhost:8080
+#   kubectl delete -f nginx.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          # nginx serves its default page immediately, so a plain HTTP GET is
+          # an honest readiness signal -- no need for a custom health endpoint.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            # nginx:alpine writes its pid and temp files under /var/cache and
+            # /var/run; emptyDir keeps those off the node writable layer.
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /var/run
+      volumes:
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-lb
+  labels:
+    app: nginx
+spec:
+  type: LoadBalancer
+  selector:
+    app: nginx
+  ports:
+    - name: http
+      # 8080 rather than 80 so the Service does not collide with anything the
+      # host already has on the privileged port.
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-np
+  labels:
+    app: nginx
+spec:
+  type: NodePort
+  selector:
+    app: nginx
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      # Pinned so the URL is stable across re-applies. Must sit inside the
+      # cluster nodePort range, 30000-32767 by default.
+      nodePort: 30080
+      protocol: TCP

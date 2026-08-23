@@ -1,0 +1,86 @@
+# Ubuntu 22.04 shell pod on the CUDA base image, with the GPU wired through.
+#
+# Why hostPath instead of `resources.limits: nvidia.com/gpu`:
+# Docker Desktop's kubeadm cluster runs kubelet against cri-dockerd, and
+# cri-dockerd pins every pod container to the `runc` runtime. So neither of the
+# usual paths works here --
+#   * setting "default-runtime": "nvidia" in the engine only affects `docker
+#     run`; cri-dockerd overrides it per container
+#   * a RuntimeClass with handler `nvidia` is rejected outright:
+#     `RuntimeHandler "nvidia" not supported`
+# With the NVIDIA runtime unreachable, nothing injects the driver, and no
+# device plugin can advertise nvidia.com/gpu. Mounting the WSL GPU stack by
+# hand is what is left, and it works.
+#
+# What the three pieces do:
+#   /dev/dxg          the WSL2 GPU paravirtualization device (there are no
+#                     /dev/nvidia* nodes under WSL)
+#   /usr/lib/wsl      libcuda / libnvidia-ml / libdxcore plus the nvidia-smi
+#                     binary, projected from the Windows driver. Both `lib` and
+#                     `drivers` are required -- libdxcore.so reads the latter,
+#                     and mounting only `lib` fails with "Driver Not Loaded".
+#   privileged: true  required. hostPath alone does not grant the cgroup device
+#                     permission for /dev/dxg; without it nvidia-smi reports
+#                     "GPU access blocked by the operating system".
+#
+# Trade-off: the GPU is not a scheduled resource. There is no nvidia.com/gpu
+# accounting, so nothing stops two pods claiming the same GPU. Fine for a
+# single-node local cluster, not a pattern to carry to a real one.
+#
+#   kubectl apply -f cuda-ubuntu-pod.yaml
+#   kubectl exec -it cuda-ubuntu -- bash
+#   kubectl exec cuda-ubuntu -- nvidia-smi
+#   kubectl delete -f cuda-ubuntu-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cuda-ubuntu
+  labels:
+    app: cuda-ubuntu
+spec:
+  restartPolicy: Always
+  containers:
+    - name: ubuntu
+      image: nvidia/cuda:12.4.1-base-ubuntu22.04
+      imagePullPolicy: IfNotPresent
+      # The image's default entrypoint exits immediately; sleep keeps the pod
+      # up so it can be exec'd into.
+      command: ["sleep", "infinity"]
+      securityContext:
+        privileged: true
+      env:
+        # The dynamic linker finds libcuda.so.1 / libnvidia-ml.so.1 here.
+        - name: LD_LIBRARY_PATH
+          value: "/usr/lib/wsl/lib"
+        # Puts nvidia-smi on PATH so `kubectl exec ... -- nvidia-smi` works
+        # without spelling out the full path.
+        - name: PATH
+          value: "/usr/lib/wsl/lib:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "512Mi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+      volumeMounts:
+        - name: wsl
+          mountPath: /usr/lib/wsl
+          readOnly: true
+        - name: dxg
+          mountPath: /dev/dxg
+        # apt and pip unpack into /tmp; an emptyDir keeps that off the node's
+        # writable layer and gets cleaned up with the pod.
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: wsl
+      hostPath:
+        path: /usr/lib/wsl
+        type: Directory
+    - name: dxg
+      hostPath:
+        path: /dev/dxg
+        type: CharDevice
+    - name: tmp
+      emptyDir: {}

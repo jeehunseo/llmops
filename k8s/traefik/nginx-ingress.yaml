@@ -1,0 +1,58 @@
+# Routes external traffic to the nginx Deployment in ../nginx/nginx.yaml.
+#
+# Identical to the ingress-nginx version except for ingressClassName -- that
+# one line is the whole migration for a plain Ingress. Annotations are where
+# the two differ; there are none here, so nothing else changes.
+#
+# Apply after the Traefik release is up.
+#
+#   kubectl apply -f nginx-ingress.yaml
+#   curl http://nginx.localtest.me/
+#   curl http://localhost/
+#   curl -H "Host: nginx.localtest.me" http://localhost/
+#
+# Two rules are defined:
+#
+#   nginx.localtest.me   host-based. localtest.me and every subdomain resolve
+#                        to 127.0.0.1 publicly, so this needs no hosts file
+#                        edit and no DNS setup.
+#
+#   (no host)            catch-all, so plain http://localhost/ also reaches
+#                        nginx. Drop this rule once a second app is added,
+#                        otherwise it swallows every unmatched request.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  # Matches ingressClass.name in values.yaml. Named explicitly rather than
+  # relying on isDefaultClass, so this keeps working if a second controller
+  # is ever added.
+  ingressClassName: traefik
+  rules:
+    - host: nginx.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                # The Service in ../nginx/nginx.yaml. It is typed NodePort
+                # there so it can be reached without an ingress; an Ingress
+                # backend works against any Service type, so it is left as is.
+                # A ClusterIP Service is the tidier choice once the ingress is
+                # the only entry point.
+                name: nginx-np
+                port:
+                  number: 80
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-np
+                port:
+                  number: 80

@@ -1,0 +1,125 @@
+# Traefik Helm values for the local Docker Desktop cluster.
+#
+# Chart traefik/traefik 41.3.0 (appVersion v3.7.11). Keys below follow that
+# chart's schema -- v2 and early v3 charts used different paths, so values
+# copied from older guides will silently do nothing.
+#
+# Keys appear in the same order as the chart's own values.yaml, so the two
+# files can be read side by side.
+#
+# Only settings that differ from the chart defaults are listed, plus a few that
+# match the default but are worth stating because they matter here.
+#
+#   helm template traefik ./traefik/ -f my_values.yaml -n traefik   # inspect
+#   helm upgrade --install traefik ./traefik/ -f my_values.yaml \
+#     --namespace traefik --create-namespace
+
+deployment:
+  # Single-node cluster; a second replica would only contend for the same
+  # host ports without adding availability.
+  replicas: 1
+
+# Creates the IngressClass named `traefik`, which is what
+# `ingressClassName: traefik` in an Ingress refers to.
+ingressClass:
+  enabled: true
+  # Makes it the default, so an Ingress with no ingressClassName is still
+  # picked up. Safe while this is the only controller in the cluster.
+  isDefaultClass: true
+  name: traefik
+
+api:
+  dashboard: true
+
+ingressRoute:
+  dashboard:
+    # Serves the dashboard on the `traefik` entrypoint only, which is not
+    # exposed externally per the ports block below.
+    enabled: true
+    entryPoints:
+      - traefik
+  healthcheck:
+    enabled: true
+
+providers:
+  # Traefik's own CRDs (IngressRoute, Middleware, TLSOption). Not required for
+  # the Ingress API, but the CRDs ship with the chart anyway and middlewares
+  # are the idiomatic way to express rewrites and auth here.
+  kubernetesCRD:
+    enabled: true
+  # The plain Kubernetes Ingress API -- this is what makes existing Ingress
+  # manifests work, including ones migrated off ingress-nginx.
+  kubernetesIngress:
+    enabled: true
+    publishedService:
+      # Writes the LoadBalancer address back into each Ingress's status field,
+      # so `kubectl get ingress` shows an ADDRESS instead of staying blank.
+      enabled: true
+  # Gateway API. Off because the Gateway API CRDs are not installed on this
+  # cluster; enabling it without them makes Traefik log errors on every
+  # reconcile. Install the CRDs first, then flip this.
+  kubernetesGateway:
+    enabled: false
+  # Drop-in mode for ingress-nginx. With this on, Traefik also serves Ingresses
+  # that still say `ingressClassName: nginx` and understands ingress-nginx
+  # annotations -- so an existing set of manifests migrates with no edits at
+  # all. Left off here because nginx-ingress.yaml already says `traefik`;
+  # turn it on when adopting manifests written for ingress-nginx.
+  # kubernetesIngressNGINX:
+  #   enabled: true
+  #   controllerClass: "k8s.io/ingress-nginx"
+  #   ingressClass: "nginx"
+
+log:
+  format: common
+  level: INFO
+
+accessLog:
+  # Off by default in the chart. Worth having locally -- it is the fastest way
+  # to tell "the request never reached Traefik" from "Traefik returned 404".
+  enabled: true
+  format: common
+
+ports:
+  traefik:
+    # The dashboard/API entrypoint. Deliberately not exposed through the
+    # LoadBalancer -- it is unauthenticated. Reach it with a port-forward:
+    #   kubectl -n traefik port-forward deploy/traefik 8080:8080
+    #   open http://localhost:8080/dashboard/
+    port: 8080
+    expose:
+      default: false
+  web:
+    expose:
+      default: true
+    # Host-facing port 80, so `curl http://nginx.localtest.me/` works with no
+    # port suffix. If something on Windows already holds port 80 the Service
+    # will fail to bind -- change exposedPort to 8000 and append :8000 to URLs.
+    exposedPort: 80
+    # Leave HTTP->HTTPS redirection off: there is no certificate here, and a
+    # redirect to a port serving nothing just breaks every request.
+    # http:
+    #   redirections:
+    #     entryPoint:
+    #       to: websecure
+    #       scheme: https
+  websecure:
+    expose:
+      default: true
+    exposedPort: 443
+
+service:
+  enabled: true
+  spec:
+    # Docker Desktop assigns EXTERNAL-IP: localhost to LoadBalancer Services,
+    # verified earlier with the nginx Service. On a cluster with no
+    # LoadBalancer provider this stays <pending> -- use NodePort there instead.
+    type: LoadBalancer
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi

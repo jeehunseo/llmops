@@ -1,0 +1,9 @@
+{
+  "metadata": { "name": "gv-pod", "namespace": "default", "uid": "gv-pod-uid" },
+  "log_directory": "/tmp",
+  "linux": {
+    "security_context": {
+      "namespace_options": { "network": 2 }
+    }
+  }
+}
