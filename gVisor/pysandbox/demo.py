@@ -164,9 +164,17 @@ def main() -> int:
             print(box.run(program).report())
         print()
 
-    print("Probes 5 and 6 are expected to look identical in both columns.")
-    print("See README.md -- they are the reason `runsc do` is a syscall")
-    print("sandbox and not yet a code-execution sandbox.")
+    print("Probes 5 and 6 are expected to look identical in both columns:")
+    print("bare `runsc do` isolates syscalls and writes, but not host file")
+    print("reads and not resources. Both are fixable, and this demo runs")
+    print("without the fixes on purpose, so the difference is visible.")
+    print()
+    print("  ./build_jail.sh                       # a Python-only root fs")
+    print("  python sandbox.py --root ~/gvjail --python /usr/bin/python3.12 \\")
+    print("      --memory 400M --cpu 25% -f example_program.py")
+    print()
+    print("With those, probe 5 reports the host files as absent and probe 6")
+    print("runs at roughly the quota. See README.md.")
     return 0
 
 

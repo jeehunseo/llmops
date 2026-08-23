@@ -52,7 +52,14 @@ class SandboxResult:
 
     def report(self) -> str:
         head = "gVisor/" + (self.platform or "?") if self.sandboxed else "native"
-        state = "TIMEOUT" if self.timed_out else "exit=%d" % self.exit_code
+        if self.timed_out:
+            state = "TIMEOUT"
+        elif self.exit_code == 137:
+            # 128 + SIGKILL. With a MemoryMax set, this is all the OOM killer
+            # leaves behind -- the program gets no exception and prints nothing.
+            state = "KILLED (137, out of memory?)"
+        else:
+            state = "exit=%d" % self.exit_code
         lines = ["[%s] %s in %.2fs" % (head, state, self.duration_s)]
         if self.stdout:
             lines.append(_indent(self.stdout, "  out| "))
@@ -74,6 +81,9 @@ class GVisorSandbox:
         network: bool = False,
         timeout: int = 30,
         python: str = "python3",
+        root: str | None = None,
+        memory_max: str | None = None,
+        cpu_quota: str | None = None,
     ) -> None:
         self.distro = distro
         self.runsc = runsc
@@ -81,6 +91,13 @@ class GVisorSandbox:
         self.network = network
         self.timeout = timeout
         self.python = python
+        # Sandbox root filesystem. Without it `runsc do` uses the host's, which
+        # leaves every host file readable from inside. See build_jail.sh.
+        self.root = root
+        # Host-side cgroup bounds, applied by wrapping the whole invocation in
+        # a transient systemd scope. Strings in systemd's units: "400M", "50%".
+        self.memory_max = memory_max
+        self.cpu_quota = cpu_quota
 
     # -- command construction -------------------------------------------------
 
@@ -110,10 +127,30 @@ class GVisorSandbox:
             "exec(compile(src,'sandbox_code.py','exec'),{'__name__':'__main__'})"
         )
 
+    def _scope(self) -> list[str]:
+        """A transient systemd scope carrying the cgroup limits, or nothing.
+
+        --user works without sudo because systemd delegates the cpu, memory and
+        pids controllers to the user slice on cgroup v2. Verify with:
+            cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@*.service/cgroup.controllers
+        """
+        if not (self.memory_max or self.cpu_quota):
+            return []
+        argv = ["systemd-run", "--user", "--scope", "-q"]
+        if self.memory_max:
+            # MemorySwapMax=0 matters: without it the cgroup spills to swap and
+            # the limit turns into a slowdown instead of a kill.
+            argv += ["-p", "MemoryMax=" + self.memory_max, "-p", "MemorySwapMax=0"]
+        if self.cpu_quota:
+            argv += ["-p", "CPUQuota=" + self.cpu_quota]
+        return argv
+
     def _argv(self, code: str, sandboxed: bool) -> list[str]:
         # -k 5: SIGTERM first, SIGKILL five seconds later, so a program with a
-        # cleanup handler gets a chance to run it.
-        inner = ["timeout", "-k", "5", str(self.timeout)]
+        # cleanup handler gets a chance to run it. It sits inside the scope so
+        # that it is the direct parent of runsc -- wrapping systemd-run instead
+        # would leave the signal to propagate through one more hop.
+        inner = self._scope() + ["timeout", "-k", "5", str(self.timeout)]
         if sandboxed:
             inner += [
                 self.runsc,
@@ -122,6 +159,10 @@ class GVisorSandbox:
                 "--platform=" + self.platform,
                 "do",
             ]
+            if self.root:
+                # -cwd / because the default working directory is inherited
+                # from the host and will not exist inside the jail.
+                inner += ["-root", self.root, "-cwd", "/"]
         inner += [self.python, "-c", self._bootstrap(code)]
         return self._wsl_prefix() + inner
 
@@ -217,6 +258,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--network", action="store_true", help="allow egress (default: none)")
     ap.add_argument("--timeout", type=int, default=30)
+    ap.add_argument(
+        "--root",
+        help="sandbox root filesystem, e.g. ~/gvjail (see build_jail.sh). "
+        "Without it the HOST root is used and host files stay readable.",
+    )
+    ap.add_argument("--python", default="python3",
+                    help="interpreter path inside the sandbox (default: python3)")
+    ap.add_argument("--memory", help="cgroup memory ceiling, e.g. 400M")
+    ap.add_argument("--cpu", help="cgroup cpu ceiling, e.g. 25%%")
     ap.add_argument("--native", action="store_true", help="skip gVisor, run bare")
     ap.add_argument("--compare", action="store_true", help="run both, print both")
     args = ap.parse_args(argv)
@@ -237,6 +287,10 @@ def main(argv: list[str] | None = None) -> int:
         platform=args.platform,
         network=args.network,
         timeout=args.timeout,
+        python=args.python,
+        root=args.root,
+        memory_max=args.memory,
+        cpu_quota=args.cpu,
     )
 
     if args.compare:
