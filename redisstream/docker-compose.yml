@@ -1,0 +1,71 @@
+services:
+  valkey:
+    image: valkey/valkey:9.1.2-alpine
+    command:
+      - valkey-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: .
+    command: ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      VALKEY_URL: redis://valkey:6379/0
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      # API 입력 상한
+      MAX_STEPS: "${MAX_STEPS:-100}"
+      MAX_STEP_DELAY_SEC: "${MAX_STEP_DELAY_SEC:-3600}"
+    ports:
+      - "8000:8000"
+    depends_on:
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker.main"]
+    # SHUTDOWN_GRACE_SEC보다 커야 drain이 SIGKILL에 잘리지 않는다.
+    stop_grace_period: "${STOP_GRACE_PERIOD:-70s}"
+    environment:
+      VALKEY_URL: redis://valkey:6379/0
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+
+      # 회수 타이밍: worker 사망을 감지하기까지의 시간
+      CLAIM_IDLE_MS: "${CLAIM_IDLE_MS:-30000}"
+      HEARTBEAT_INTERVAL_SEC: "${HEARTBEAT_INTERVAL_SEC:-10}"
+      RECLAIM_INTERVAL_SEC: "${RECLAIM_INTERVAL_SEC:-3}"
+      READ_BLOCK_MS: "${READ_BLOCK_MS:-3000}"
+
+      # 재시도: 초과 시 DLQ로 이동
+      MAX_RETRIES: "${MAX_RETRIES:-5}"
+
+      # 종료: 실행 중 job에 허용할 완주 시간
+      SHUTDOWN_GRACE_SEC: "${SHUTDOWN_GRACE_SEC:-60}"
+
+      # janitor: consumer 정리 + stream 트리밍
+      CONSUMER_IDLE_MS: "${CONSUMER_IDLE_MS:-300000}"
+      JANITOR_INTERVAL_SEC: "${JANITOR_INTERVAL_SEC:-60}"
+      JANITOR_LOCK_TTL_SEC: "${JANITOR_LOCK_TTL_SEC:-55}"
+      TRIM_ENABLED: "${TRIM_ENABLED:-true}"
+
+      # 보관
+      DEAD_MAXLEN: "${DEAD_MAXLEN:-10000}"
+      JOB_TTL_SEC: "${JOB_TTL_SEC:-604800}"
+    depends_on:
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  valkey-data:

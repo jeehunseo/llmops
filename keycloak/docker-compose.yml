@@ -1,0 +1,93 @@
+services:
+  keycloak-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+      POSTGRES_DB: keycloak
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      # realm/user/client 가 실제로 저장되는 곳. 컨테이너를 지워도 남는다.
+      - keycloak_pgdata:/var/lib/postgresql/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    # start-dev 는 HTTP 를 허용하고 TLS 설정을 요구하지 않는다. 저장소만
+    # Postgres 로 빼서 컨테이너를 지워도 데이터가 남게 했다. 운영에서는
+    # `start` 와 TLS/프록시 설정이 추가로 필요하다.
+    command: ["start-dev", "--import-realm"]
+    restart: unless-stopped
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      # 브라우저가 리다이렉트로 찾아가는 주소를 고정한다. 이 값이 없으면
+      # Keycloak 이 요청 Host 로 issuer 를 만들어, 브라우저(localhost:8180)와
+      # 앱(keycloak:8080)이 서로 다른 issuer 의 토큰을 보게 된다.
+      KC_HOSTNAME: http://localhost:8180
+      # 프런트 주소는 위로 고정하되, 서버 간 호출은 요청 호스트를 그대로
+      # 쓰게 둔다. 앱은 계속 http://keycloak:8080 으로 토큰을 교환한다.
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      # /health/ready 를 관리 포트(9000)에 노출한다.
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      # 컨테이너 기동 시 realm/client/테스트 사용자를 자동 생성한다.
+      - ./realm:/opt/keycloak/data/import:ro
+    ports:
+      - "8180:8080"
+    healthcheck:
+      # 이미지에 curl/wget이 없어 bash의 /dev/tcp로 관리 포트를 두드린다.
+      # 블록 스칼라라 역슬래시가 그대로 전달되고, printf 가 CRLF 로 해석한다.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"status": "UP"' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  auth-api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    ports:
+      - "3200:8000"
+    environment:
+      # 컨테이너 사이에서는 서비스명으로 부른다(호스트 포트 8180이 아님).
+      KEYCLOAK_BASE_URL: http://keycloak:8080
+      KEYCLOAK_REALM: llmops
+      KEYCLOAK_CLIENT_ID: llmops-api
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-llmops-api-secret}
+      # 브라우저가 여는 주소. 컨테이너 내부 주소로는 브라우저가 닿지 못한다.
+      KEYCLOAK_PUBLIC_BASE_URL: http://localhost:8180
+      KEYCLOAK_WEB_CLIENT_ID: llmops-web
+      KEYCLOAK_WEB_CLIENT_SECRET: ${KEYCLOAK_WEB_CLIENT_SECRET:-llmops-web-secret}
+      WEB_REDIRECT_URI: http://localhost:3200/auth/callback
+      WEB_POST_LOGOUT_URI: http://localhost:3200/web
+
+volumes:
+  keycloak_pgdata:
+
+networks:
+  default:
+    name: llmops-net
+    external: true

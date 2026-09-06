@@ -1,0 +1,21 @@
+[project]
+name = "keycloak-auth-api"
+version = "0.1.0"
+description = "Keycloak 연계 FastAPI 예제: 로그인 요청과 JWT 토큰 발급"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.7.0",
+    "uvicorn[standard]>=0.52.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+]
+
+# 배포 대상은 app 패키지가 아니라 컨테이너이므로 빌드하지 않는다.
+[tool.uv]
+package = false

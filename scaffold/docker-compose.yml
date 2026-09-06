@@ -1,0 +1,41 @@
+services:
+  agent-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: agent
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - agent_pgdata:/var/lib/postgresql/data
+
+  agent:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      agent-postgres:
+        condition: service_healthy
+    ports:
+      - "3100:8000"
+    environment:
+      ENV: prod
+      POSTGRES_URL: postgresql://agent:agent@agent-postgres:5432/agent?sslmode=disable
+      INFERENCE_BASE_URL: http://inference-api:8080/v1
+      MODEL_NAME: ministral-3b
+      SERVICE_NAME: scaffold-agent
+      LANGFUSE_HOST: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+
+volumes:
+  agent_pgdata:
+
+networks:
+  default:
+    name: llmops-net
+    external: true
