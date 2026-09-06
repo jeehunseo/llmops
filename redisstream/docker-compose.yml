@@ -35,6 +35,10 @@ services:
   worker:
     build: .
     command: ["python", "-m", "app.worker.main"]
+    # worker process 하나는 한 번에 job 하나만 실행한다.
+    # 따라서 동시 처리량은 곧 replica 수다.
+    deploy:
+      replicas: ${WORKER_REPLICAS:-3}
     # SHUTDOWN_GRACE_SEC보다 커야 drain이 SIGKILL에 잘리지 않는다.
     stop_grace_period: "${STOP_GRACE_PERIOD:-70s}"
     environment:

@@ -138,6 +138,7 @@ janitor가 `XTRIM MINID`로 자르되, 기준점을 PEL의 최소 id로 잡아
 | `MAX_STEPS` | `100` | API가 받는 `steps` 상한 |
 | `MAX_STEP_DELAY_SEC` | `3600` | API가 받는 `step_delay_sec` 상한 |
 | `LOG_LEVEL` | `INFO` | 로그 레벨 |
+| `WORKER_REPLICAS` | `3` | worker 컨테이너 수. 동시 처리 가능한 job 수와 같다 |
 | `STOP_GRACE_PERIOD` | `70s` | compose가 SIGKILL까지 기다리는 시간 |
 
 잘못된 조합은 기동 시점에 `ConfigError`로 막는다.
@@ -221,14 +222,21 @@ docker compose exec valkey valkey-cli XLEN jobs:dead
 
 `job_id`가 없으므로 첫 배달에서 곧바로 DLQ로 이동해야 한다.
 
-## Worker 여러 개로 분산 처리
+## Worker 수
+
+worker는 기본 **3개**로 뜬다(`WORKER_REPLICAS`).
 
 ```bash
-docker compose up --build --scale worker=3
+docker compose up --build          # worker 3개
+WORKER_REPLICAS=5 docker compose up --build
 ```
 
 각 worker process는 자기 내부에서는 한 번에 하나만 실행한다.
-따라서 worker가 3개면 시스템 전체에서는 최대 3개의 job이 동시에 실행된다.
+따라서 **동시 처리량은 곧 replica 수**다. worker가 3개면 시스템 전체에서
+최대 3개의 job이 동시에 실행된다.
+
+worker를 늘려도 각 worker가 PEL에 선점하는 message는 1건을 넘지 않는다.
+`capacity = Semaphore(1)`을 Redis read 전에 잡기 때문이다.
 
 ## 상태 확인
 
